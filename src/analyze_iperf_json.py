@@ -1,113 +1,4 @@
-def generate_combined_report(self):
-        """Generate a combined report with multiple CDFs on one page"""
-        # Count how many metrics we have data for
-        available_metrics = sum(1 for metric in self.data.values() if metric)
-        
-        if available_metrics == 0:
-            print("No data available for plotting")
-            return
-            
-        # Calculate grid size
-        cols = 2
-        rows = (available_metrics + 1) // 2
-        
-        fig, axes = plt.subplots(rows, cols, figsize=(15, 5*rows))
-        if rows == 1:
-            axes = axes.reshape(1, -1)
-        
-        plot_idx = 0
-        
-        # Plot each metric
-        metric_configs = [
-            ('transfer_times', 'Transfer Time CDF', 'Time (seconds)'),
-            ('rtts', 'RTT CDF', 'RTT (milliseconds)'),
-            ('throughputs', 'Interval Throughput CDF', 'Throughput (Gbps)'),
-            ('receiver_throughputs', 'Average Receiver Throughput CDF', 'Throughput (Gbps)'),
-        ]
-        
-        for metric_key, title, xlabel in metric_configs:
-            if self.data[metric_key]:
-                row = plot_idx // cols
-                col = plot_idx % cols
-                ax = axes[row, col] if available_metrics > 1 else axes
-                
-                self.generate_cdf(self.data[metric_key], title, xlabel, 
-                                 f"{metric_key}_cdf.png", ax=ax)
-                plot_idx += 1
-        
-        # Hide empty subplots
-        while plot_idx < rows * cols:
-            row = plot_idx // cols
-            col = plot_idx % cols
-            axes[row, col].set_visible(False)
-            plot_idx += 1
-        
-        plt.tight_layout()
-        combined_path = os.path.join(self.output_dir, 'combined_cdfs.png')
-        plt.savefig(combined_path, dpi=150, bbox_inches='tight')
-        plt.close()
-        print(f"\nCombined report saved: {combined_path}")
-        
-def analyze_worst_case_by_second(self):
-    """Analyze worst-case transfer times grouped by start second"""
-    if not self.transfer_time_records:
-        print("\nNo transfer time records with timestamps available for batch analysis")
-        return
-        
-    # Sort records by start time
-    sorted_records = sorted(self.transfer_time_records, key=lambda x: x['start_time'])
-    
-    # Find the range of timestamps
-    min_time = sorted_records[0]['start_time']
-    max_time = sorted_records[-1]['start_time']
-    
-    # Group by second and find worst case
-    worst_case_by_second = {}
-    for record in sorted_records:
-        # Calculate which second this belongs to (relative to first connection)
-        second_bucket = int(record['start_time'] - min_time)
-        
-        if second_bucket not in worst_case_by_second:
-            worst_case_by_second[second_bucket] = record['duration']
-        else:
-            worst_case_by_second[second_bucket] = max(worst_case_by_second[second_bucket], 
-                                                        record['duration'])
-    
-    # Convert to sorted list
-    seconds = sorted(worst_case_by_second.keys())
-    worst_case_times = [worst_case_by_second[s] for s in seconds]
-    
-    print(f"\n=== Worst-Case Transfer Time by Second ===")
-    print(f"Total seconds with connections: {len(seconds)}")
-    print(f"\nFirst 10 seconds: {[f'{t:.2f}s' for t in worst_case_times[:10]]}")
-    
-    # Create plot
-    plt.figure(figsize=(12, 6))
-    plt.plot(seconds, worst_case_times, 'b-', linewidth=2, marker='o', markersize=4)
-    plt.xlabel('Time (seconds from first connection)')
-    plt.ylabel('Worst-case Transfer Time (seconds)')
-    plt.title('Worst-case Transfer Time by Second')
-    plt.grid(True, alpha=0.3)
-    
-    # Add statistics as text
-    avg_worst = np.mean(worst_case_times)
-    max_worst = max(worst_case_times)
-    min_worst = min(worst_case_times)
-    plt.text(0.02, 0.98, f'Max: {max_worst:.2f}s\nAvg: {avg_worst:.2f}s\nMin: {min_worst:.2f}s', 
-            transform=plt.gca().transAxes, verticalalignment='top',
-            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-    
-    output_path = os.path.join(self.output_dir, 'worst_case_transfer_time_by_second.png')
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    plt.close()
-    print(f"\nWorst-case plot saved: {output_path}")
-    
-    # Also print summary statistics
-    print(f"\nSummary Statistics:")
-    print(f"  Min worst-case: {min_worst:.2f}s")
-    print(f"  Max worst-case: {max_worst:.2f}s") 
-    print(f"  Avg worst-case: {avg_worst:.2f}s")
-    print(f"  Std deviation: {np.std(worst_case_times):.2f}s")#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Analyze iperf3 JSON logs to generate CDFs for various metrics
 """
@@ -119,6 +10,7 @@ import glob
 import os
 from pathlib import Path
 from datetime import datetime
+from collections import defaultdict
 
 class IperfJsonAnalyzer:
     def __init__(self, json_pattern, output_dir=None):
@@ -130,15 +22,12 @@ class IperfJsonAnalyzer:
             'throughputs': [],
             'receiver_throughputs': []
         }
-        # New: store transfer times with start timestamps
         self.transfer_time_records = []
-        # New: store transfer times with start timestamps
-        self.transfer_time_records = []
+        self.worst_case_per_second = {}
         
     def setup_output_directory(self):
         """Create output directory for results"""
         os.makedirs(self.output_dir, exist_ok=True)
-        print(f"Output directory: {self.output_dir}")
         
     def load_json_files(self):
         """Load all JSON files matching the pattern"""
@@ -154,10 +43,9 @@ class IperfJsonAnalyzer:
             with open(json_file, 'r') as f:
                 data = json.load(f)
                 
-            # Extract start timestamp
             start_timestamp = None
             if 'start' in data and 'timestamp' in data['start']:
-                start_timestamp = data['start']['timestamp'].get('timesecs', 0)
+                start_timestamp = data['start']['timestamp']['timesecs']
                 
             # Extract transfer time
             if 'end' in data:
@@ -169,7 +57,6 @@ class IperfJsonAnalyzer:
                     if duration > 0:
                         self.data['transfer_times'].append(duration)
                         
-                        # Store with timestamp for batch analysis
                         if start_timestamp:
                             self.transfer_time_records.append({
                                 'start_time': start_timestamp,
@@ -212,7 +99,53 @@ class IperfJsonAnalyzer:
                                 
         except Exception as e:
             print(f"Error processing {json_file}: {e}")
+    
+    def batch_and_compute_worst_case(self):
+        """Batch transfer times by 1-second intervals and find worst case per second"""
+        if not self.transfer_time_records:
+            print("No transfer time records with timestamps available for batching")
+            return
+        
+        batches = defaultdict(list)
+        for record in self.transfer_time_records:
+            second_bucket = int(record['start_time'])
+            batches[second_bucket].append(record['duration'])
+        
+        self.worst_case_per_second = {}
+        for second, durations in sorted(batches.items()):
+            self.worst_case_per_second[second] = max(durations)
+        
+        if self.worst_case_per_second:
+            sorted_seconds = sorted(self.worst_case_per_second.keys())
+            self.worst_case_array = [self.worst_case_per_second[s] for s in sorted_seconds]
             
+            print("\nWorst-case transfer times per second (first 10):")
+            first_10 = self.worst_case_array[:10]
+            print("  " + " ".join([f"{val:.3f}" for val in first_10]))
+            
+            self.plot_worst_case_transfer_times()
+    
+    def plot_worst_case_transfer_times(self):
+        """Plot the worst case transfer times per second"""
+        if not hasattr(self, 'worst_case_array'):
+            return
+            
+        plt.figure(figsize=(12, 6))
+        
+        # Time series plot
+        plt.subplot(1, 2, 1)
+        plt.plot(range(len(self.worst_case_array)), self.worst_case_array, 'b-', linewidth=1)
+        plt.xlabel('Time (seconds from start)')
+        plt.ylabel('Worst-case Transfer Time (seconds)')
+        plt.title(f'Worst-case Transfer Time per Second (n={len(self.worst_case_array)})')
+        plt.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        output_path = os.path.join(self.output_dir, 'worst_case_transfer_times.png')
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"  Saved worst-case plot: worst_case_transfer_times.png")
+          
     def generate_cdf(self, data, title, xlabel, filename, ax=None):
         """Generate and save a CDF plot"""
         if not data:
@@ -270,71 +203,60 @@ class IperfJsonAnalyzer:
         print(f"  Std Dev: {np.std(data):.2f} {unit}")
         
         # Percentiles
-        print("  Percentiles:")
-        for p in [10, 25, 50, 75, 90, 95, 99]:
-            value = np.percentile(data, p)
-            print(f"    P{p}: {value:.2f} {unit}")
+        #print("  Percentiles:")
+        #for p in [10, 25, 50, 75, 90, 95, 99]:
+        #    value = np.percentile(data, p)
+        #    print(f"    P{p}: {value:.2f} {unit}")
             
-    def analyze_worst_case_by_second(self):
-        """Analyze worst-case transfer times grouped by start second"""
-        if not self.transfer_time_records:
-            print("\nNo transfer time records with timestamps available for batch analysis")
+    def generate_combined_report(self):
+        """Generate a combined report with multiple CDFs on one page"""
+        # Count how many metrics we have data for
+        available_metrics = sum(1 for metric in self.data.values() if metric)
+        
+        if available_metrics == 0:
+            print("No data available for plotting")
             return
             
-        # Sort records by start time
-        sorted_records = sorted(self.transfer_time_records, key=lambda x: x['start_time'])
+        # Calculate grid size
+        cols = 2
+        rows = (available_metrics + 1) // 2
         
-        # Find the range of timestamps
-        min_time = sorted_records[0]['start_time']
-        max_time = sorted_records[-1]['start_time']
+        fig, axes = plt.subplots(rows, cols, figsize=(15, 5*rows))
+        if rows == 1:
+            axes = axes.reshape(1, -1)
         
-        # Group by second and find worst case
-        worst_case_by_second = {}
-        for record in sorted_records:
-            # Calculate which second this belongs to (relative to first connection)
-            second_bucket = int(record['start_time'] - min_time)
-            
-            if second_bucket not in worst_case_by_second:
-                worst_case_by_second[second_bucket] = record['duration']
-            else:
-                worst_case_by_second[second_bucket] = max(worst_case_by_second[second_bucket], 
-                                                          record['duration'])
+        plot_idx = 0
         
-        # Convert to sorted list
-        seconds = sorted(worst_case_by_second.keys())
-        worst_case_times = [worst_case_by_second[s] for s in seconds]
+        # Plot each metric
+        metric_configs = [
+            ('transfer_times', 'Transfer Time CDF', 'Time (seconds)'),
+            ('rtts', 'RTT CDF', 'RTT (milliseconds)'),
+            ('throughputs', 'Interval Throughput CDF', 'Throughput (Gbps)'),
+            ('receiver_throughputs', 'Average Receiver Throughput CDF', 'Throughput (Gbps)'),
+        ]
         
-        print(f"\n=== Worst-Case Transfer Time by Second ===")
-        print(f"Total seconds with connections: {len(seconds)}")
-        print(f"\nFirst 10 seconds: {[f'{t:.2f}s' for t in worst_case_times[:10]]}")
+        for metric_key, title, xlabel in metric_configs:
+            if self.data[metric_key]:
+                row = plot_idx // cols
+                col = plot_idx % cols
+                ax = axes[row, col] if available_metrics > 1 else axes
+                
+                self.generate_cdf(self.data[metric_key], title, xlabel, 
+                                 f"{metric_key}_cdf.png", ax=ax)
+                plot_idx += 1
         
-        # Create plot
-        plt.figure(figsize=(12, 6))
-        plt.plot(seconds, worst_case_times, 'b-', linewidth=2, marker='o', markersize=4)
-        plt.xlabel('Time (seconds from first connection)')
-        plt.ylabel('Worst-case Transfer Time (seconds)')
-        plt.title('Worst-case Transfer Time by Second')
-        plt.grid(True, alpha=0.3)
+        # Hide empty subplots
+        while plot_idx < rows * cols:
+            row = plot_idx // cols
+            col = plot_idx % cols
+            axes[row, col].set_visible(False)
+            plot_idx += 1
         
-        # Add statistics as text
-        avg_worst = np.mean(worst_case_times)
-        max_worst = max(worst_case_times)
-        min_worst = min(worst_case_times)
-        plt.text(0.02, 0.98, f'Max: {max_worst:.2f}s\nAvg: {avg_worst:.2f}s\nMin: {min_worst:.2f}s', 
-                transform=plt.gca().transAxes, verticalalignment='top',
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-        
-        output_path = os.path.join(self.output_dir, 'worst_case_transfer_time_by_second.png')
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.tight_layout()
+        combined_path = os.path.join(self.output_dir, 'combined_cdfs.png')
+        plt.savefig(combined_path, dpi=150, bbox_inches='tight')
         plt.close()
-        print(f"\nWorst-case plot saved: {output_path}")
-        
-        # Also print summary statistics
-        print(f"\nSummary Statistics:")
-        print(f"  Min worst-case: {min_worst:.2f}s")
-        print(f"  Max worst-case: {max_worst:.2f}s") 
-        print(f"  Avg worst-case: {avg_worst:.2f}s")
-        print(f"  Std deviation: {np.std(worst_case_times):.2f}s")
+        print(f"\nCombined report saved: {combined_path}")
         
     def analyze(self):
         """Run the complete analysis"""
@@ -346,15 +268,13 @@ class IperfJsonAnalyzer:
         # Load files
         json_files = self.load_json_files()
         
-        # Extract metrics from each file
-        print("\nExtracting metrics...")
         for json_file in json_files:
             self.extract_metrics_from_file(json_file)
             
         print(f"Extraction complete: {len(json_files)} files processed")
         
-        # Generate individual CDFs
-        print("\nGenerating CDFs...")
+        # New: Batch and compute worst-case analysis
+        self.batch_and_compute_worst_case()
         
         if self.data['transfer_times']:
             self.generate_cdf(self.data['transfer_times'], 
@@ -372,22 +292,19 @@ class IperfJsonAnalyzer:
             self.generate_cdf(self.data['throughputs'], 
                             'Interval Throughput CDF', 'Throughput (Gbps)', 
                             'throughput_cdf.png')
-            self.print_statistics(self.data['throughputs'], 'Interval Throughput', 'Gbps')
+            #self.print_statistics(self.data['throughputs'], 'Interval Throughput', 'Gbps')
             
         if self.data['receiver_throughputs']:
             self.generate_cdf(self.data['receiver_throughputs'], 
                             'Average Receiver Throughput CDF', 'Throughput (Gbps)', 
                             'receiver_throughput_cdf.png')
-            self.print_statistics(self.data['receiver_throughputs'], 'Receiver Throughput', 'Gbps')
+            #self.print_statistics(self.data['receiver_throughputs'], 'Receiver Throughput', 'Gbps')
             
         # Generate combined report
         self.generate_combined_report()
         
-        # Analyze worst-case transfer times by second
-        self.analyze_worst_case_by_second()
-        
         print(f"\n=== Analysis Complete ===")
-        print(f"Results saved in: {self.output_dir}/")
+        print(f"Results saved in: {self.output_dir}")
 
 @click.command()
 @click.argument('json_pattern')
