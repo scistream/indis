@@ -14,9 +14,29 @@ python3 src/experiment_orchestrator.py -t 30 -c 4 -i eth0 -o network_data.csv
 python3 src/experiment_client.py -t 30 -c 4 -s 1G --server <server_ip>
 ```
 
+## Installation
+
+```bash
+./install.sh
+source .venv/bin/activate
+```
+
+## Testing Installation
+
+```bash
+# Test core scripts
+python3 src/netmonitor.py --help
+python3 src/tcp_flow_monitor.py --help
+python3 src/experiment_orchestrator.py --help
+
+# Quick functionality test
+python3 src/netmonitor.py -i lo -d 5 -o test.csv
+python3 src/analyze_netmonitor.py test.csv
+```
+
 ## Requirements
 - `iperf319` binary (custom version)
-- Python dependencies: click, psutil, pandas, numpy, matplotlib
+- Python 3.8+
 
 ## Monitoring Scripts
 

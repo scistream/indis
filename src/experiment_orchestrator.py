@@ -22,6 +22,7 @@ class ExperimentOrchestrator:
         self.log_dir = f"experiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self.server_processes = []
         self.monitor_process = None
+        self.flow_monitor_process = None
         self.post_delay=post_delay
         
     def setup_directories(self):
@@ -39,17 +40,10 @@ class ExperimentOrchestrator:
             log_file = f"{self.log_dir}/iperf_logs/server_{port}.json"
             
             # Start iperf3 server with JSON output
-            cmd = [
-                "iperf319", "-s", 
-                "-p", str(port), 
-                "-1",  # One connection then exit
-                "-i", "1",  # 1 second intervals
-                "--json",
-                "--logfile", log_file
-            ]
+            cmd = f"iperf319 -s -p {port} -1 -i 1 --json --logfile {log_file}"
             
             try:
-                process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                process = subprocess.Popen(cmd.split(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 self.server_processes.append((process, port))
                 
                 if (i + 1) % 10 == 0:
@@ -60,27 +54,33 @@ class ExperimentOrchestrator:
                 
         print(f"All {len(self.server_processes)} servers started (ports {self.initial_port}-{self.initial_port + self.total_servers - 1})")
         
-    def start_network_monitor(self):
-        """Start netmonitor.py subprocess"""
+    def start_monitors(self):
+        """Start monitoring subprocesses"""
         monitor_output = f"{self.log_dir}/{self.output_file}"
+        flow_output = f"{self.log_dir}/tcp_flows.log"
         total_monitor_duration = self.duration + self.post_delay
-        cmd = [
-            "python3", "netmonitor.py",
-            "-i", self.interface,
-            "-d", str(total_monitor_duration),  # Monitor for duration + 60 seconds
-            "-o", monitor_output
+        
+        cmds = [
+            (f"python3 netmonitor.py -i {self.interface} -d {total_monitor_duration} -o {monitor_output}", "network monitor", True),
+            (f"python3 tcp_flow_monitor.py -d {total_monitor_duration} -i 0.1 -o {flow_output}", "TCP flow monitor", False)
         ]
         
-        print(f"\nStarting network monitor on interface {self.interface}...")
-        print(f"Monitor output: {monitor_output}")
+        print(f"\nStarting monitors...")
+        print(f"Network monitor output: {monitor_output}")
+        print(f"Flow monitor output: {flow_output}")
         
-        try:
-            self.monitor_process = subprocess.Popen(cmd)
-            print("Network monitor started successfully")
-        except Exception as e:
-            print(f"Error starting network monitor: {e}")
-            self.cleanup()
-            sys.exit(1)
+        for cmd, name, critical in cmds:
+            try:
+                if name == "network monitor":
+                    self.monitor_process = subprocess.Popen(cmd.split())
+                else:
+                    self.flow_monitor_process = subprocess.Popen(cmd.split())
+                print(f"{name} started successfully")
+            except Exception as e:
+                print(f"Error starting {name}: {e}")
+                if critical:
+                    self.cleanup()
+                    sys.exit(1)
             
     def wait_and_analyze(self):
         """Wait for experiment completion and run analysis"""
@@ -101,7 +101,8 @@ class ExperimentOrchestrator:
         print(f"\n=== Running Analysis ===")
         cmds = [
             f"python3 analyze_netmonitor.py {self.log_dir}/{self.output_file} --save-plots -t {self.duration}",
-            f"python3 analyze_iperf_json.py {self.log_dir}/iperf_logs/*.json -o {self.log_dir}/results/"
+            f"python3 analyze_iperf_json.py {self.log_dir}/iperf_logs/*.json -o {self.log_dir}/results/",
+            f"python3 analyze_tcp_flows.py {self.log_dir}/tcp_flows.log --save-plots"
         ]
         for cmd in cmds:
             try:
@@ -114,10 +115,14 @@ class ExperimentOrchestrator:
         """Clean up processes"""
         print("\nCleaning up...")
         
-        # Terminate monitor process
+        # Terminate monitor processes
         if self.monitor_process and self.monitor_process.poll() is None:
             self.monitor_process.terminate()
             self.monitor_process.wait()
+            
+        if self.flow_monitor_process and self.flow_monitor_process.poll() is None:
+            self.flow_monitor_process.terminate()
+            self.flow_monitor_process.wait()
             
         # Terminate any remaining server processes
         for process, port in self.server_processes:
@@ -144,8 +149,8 @@ class ExperimentOrchestrator:
             time.sleep(2)  # Allow servers to initialize
             
             # Start monitoring
-            self.start_network_monitor()
-            time.sleep(2)  # Allow monitor to initialize
+            self.start_monitors()
+            time.sleep(2)  # Allow monitors to initialize
             
             # Wait for experiment
             self.wait_and_analyze()
