@@ -31,7 +31,7 @@ def find_stream_boundaries(df, threshold_pct=0.15, duration=None):
     end_idx = len(above_threshold) - 1 - np.argmax(above_threshold[::-1])  # Last True index
     
     if duration is not None:
-        end_idx = min(start_idx + int(duration), len(tx_gbps) - 1)
+        end_idx = min(start_idx + int(duration), int(start_idx/2 + duration), len(tx_gbps) - 1)
 
     return start_idx, end_idx
 
