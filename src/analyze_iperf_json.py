@@ -13,9 +13,10 @@ from datetime import datetime
 from collections import defaultdict
 
 class IperfJsonAnalyzer:
-    def __init__(self, json_pattern, output_dir=None):
+    def __init__(self, json_pattern, output_dir=None, experiment_id=None):
         self.json_pattern = json_pattern
         self.output_dir = output_dir or "iperf_analysis_results"
+        self.experiment_id = experiment_id
         self.data = {
             'transfer_times': [],
             'rtts': [],
@@ -282,6 +283,17 @@ class IperfJsonAnalyzer:
                             'transfer_time_cdf.png')
             self.print_statistics(self.data['transfer_times'], 'Transfer Time', 'seconds')
             
+            # Save to datastore if experiment_id provided
+            if self.experiment_id:
+                try:
+                    from datastore import datastore
+                    transfer_avg = np.mean(self.data['transfer_times'])
+                    transfer_max = max(self.data['transfer_times'])
+                    datastore.save_experiment(self.experiment_id, **{
+                        'Total transfer time': transfer_avg})
+                except ImportError:
+                    pass
+            
         if self.data['rtts']:
             self.generate_cdf(self.data['rtts'], 
                             'RTT CDF', 'RTT (milliseconds)', 
@@ -310,7 +322,8 @@ class IperfJsonAnalyzer:
 @click.argument('json_pattern')
 @click.option('--output-dir', '-o', help='Output directory for results')
 @click.option('--server-side', is_flag=True, help='Analyze server-side logs (default is client-side)')
-def main(json_pattern, output_dir, server_side):
+@click.option('--experiment-id', help='Experiment ID for datastore')
+def main(json_pattern, output_dir, server_side, experiment_id):
     """
     Analyze iperf3 JSON logs and generate CDFs for various metrics
     
@@ -323,7 +336,7 @@ def main(json_pattern, output_dir, server_side):
     """
     
     # Create analyzer
-    analyzer = IperfJsonAnalyzer(json_pattern, output_dir)
+    analyzer = IperfJsonAnalyzer(json_pattern, output_dir, experiment_id)
     
     # Run analysis
     try:

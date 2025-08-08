@@ -12,14 +12,16 @@ import signal
 import sys
 
 class ExperimentOrchestrator:
-    def __init__(self, duration, clients_per_second, interface, output_file, initial_port=5101, post_delay=60):
+    def __init__(self, duration, clients_per_second, interface, output_file, initial_port=5101, post_delay=60, experiment_id=None):
         self.duration = duration
         self.clients_per_second = clients_per_second
         self.interface = interface
         self.output_file = output_file
         self.initial_port = initial_port
         self.total_servers = duration * clients_per_second
-        self.log_dir = f"experiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        self.log_dir = f"experiment_{timestamp}"
+        self.experiment_id = experiment_id
         self.server_processes = []
         self.monitor_process = None
         self.flow_monitor_process = None
@@ -100,10 +102,21 @@ class ExperimentOrchestrator:
     def run_analysis(self):
         print(f"\n=== Running Analysis ===")
         cmds = [
-            f"python3 analyze_netmonitor.py {self.log_dir}/{self.output_file} --save-plots -t {self.duration}",
-            f"python3 analyze_iperf_json.py {self.log_dir}/iperf_logs/*.json -o {self.log_dir}/results/",
+            f"python3 analyze_netmonitor.py {self.log_dir}/{self.output_file} --save-plots -t {self.duration} --experiment-id {self.experiment_id}",
+            f"python3 analyze_iperf_json.py {self.log_dir}/iperf_logs/*.json -o {self.log_dir}/results/ --experiment-id {self.experiment_id}",
             f"python3 analyze_tcp_flows.py {self.log_dir}/tcp_flows.log --save-plots"
         ]
+        
+        # Save client experiment parameters
+        if self.experiment_id:
+            try:
+                from datastore import datastore
+                datastore.save_experiment(self.experiment_id, **{
+                    'interface': self.interface,
+                    'duration': self.duration, 
+                    'Concur.': self.clients_per_second})
+            except ImportError:
+                pass
         for cmd in cmds:
             try:
                 print(cmd)
@@ -175,7 +188,8 @@ def signal_handler(sig, frame):
 @click.option('-o', '--output', default='network_counters.csv', help='Output filename for network monitor')
 @click.option('-p', '--initial-port', default=5101, help='Initial port number for iperf3 servers')
 @click.option('-d', '--delay', default=10, help='Post-experiment monitoring delay in seconds')
-def main(duration, clients_per_second, interface, output, initial_port, delay):
+@click.option('--experiment-id', help='Experiment ID for datastore')
+def main(duration, clients_per_second, interface, output, initial_port, delay, experiment_id):
     """
     Orchestrate network experiment with iperf3 servers and monitoring
     
@@ -196,7 +210,8 @@ def main(duration, clients_per_second, interface, output, initial_port, delay):
         interface=interface,
         output_file=output,
         initial_port=initial_port,
-        post_delay=delay
+        post_delay=delay,
+        experiment_id=experiment_id
     )
     
     orchestrator.run()

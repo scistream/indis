@@ -88,7 +88,7 @@ def generate_cdf(data, title, output_file=None):
         value = np.percentile(sorted_data, p)
         print(f"  P{p}: {value:.2f} Gbps")
 
-def analyze_network_counters(csv_file, expected_gbps=None, save_plots=False, duration=None):
+def analyze_network_counters(csv_file, expected_gbps=None, save_plots=False, duration=None, experiment_id=None):
     """Analyze network counter CSV data"""
     try:
         # Check if file exists and is readable
@@ -204,9 +204,22 @@ def analyze_network_counters(csv_file, expected_gbps=None, save_plots=False, dur
         
         if len(rx_nonzero) > 0:
             rx_mean = rx_nonzero.mean()
+            rx_median = rx_nonzero.median()
             rx_max = rx_nonzero.max()
             rx_std = rx_nonzero.std()
             print(f"RX Throughput: Avg={rx_mean:.2f} Gbps, Max={rx_max:.2f} Gbps, Std={rx_std:.2f}")
+            
+            # Save to datastore if experiment_id provided
+            if experiment_id:
+                try:
+                    from datastore import datastore
+                    datastore.save_experiment(experiment_id, **{
+                        'Observed utilization': rx_mean,
+                        'rx_avg': rx_mean,
+                        'rx_median': rx_median, 
+                        'rx_max': rx_max})
+                except ImportError:
+                    pass
         
         # Peak activity periods (from stream data)
         peak_tx_idx = stream_data['tx_gbps'].idxmax() if len(tx_nonzero) > 0 else None
@@ -254,9 +267,10 @@ def analyze_network_counters(csv_file, expected_gbps=None, save_plots=False, dur
 @click.option('--expected-gbps', type=float, help='Expected throughput in Gbps')
 @click.option('--save-plots', is_flag=True, help='Save CDF plots to files instead of displaying')
 @click.option('--duration', '-t', type=float, help='Known experiment duration in seconds')
-def main(csv_file, expected_gbps, save_plots, duration):
+@click.option('--experiment-id', help='Experiment ID for datastore')
+def main(csv_file, expected_gbps, save_plots, duration, experiment_id):
     """Analyze network counter CSV data with CDF generation"""
-    analyze_network_counters(csv_file, expected_gbps, save_plots, duration)
+    analyze_network_counters(csv_file, expected_gbps, save_plots, duration, experiment_id)
 
 if __name__ == "__main__":
     main()

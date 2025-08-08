@@ -15,13 +15,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class ExperimentClient:
     def __init__(self, duration, clients_per_second, transfer_size, parallel_flows, 
-                 server_ip, initial_port):
+                 server_ip, initial_port, experiment_id=None):
         self.duration = duration
         self.clients_per_second = clients_per_second
         self.transfer_size = transfer_size
         self.parallel_flows = parallel_flows
         self.server_ip = server_ip
         self.initial_port = initial_port
+        self.experiment_id = experiment_id
         self.log_dir = f"client_experiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self.current_port = initial_port
         self.active_processes = []
@@ -170,6 +171,18 @@ class ExperimentClient:
         
         print(f"\n\nAll clients completed!")
         
+        # Save client parameters to datastore
+        if self.experiment_id:
+            try:
+                from datastore import datastore
+                datastore.save_experiment(self.experiment_id, **{
+                    'Parallel.': self.parallel_flows,
+                    'size': self.transfer_size,
+                    'Freq': self.clients_per_second
+                })
+            except ImportError:
+                pass
+        
     def cleanup(self):
         """Clean up any remaining processes"""
         if self.active_processes:
@@ -212,7 +225,8 @@ class ExperimentClient:
 @click.option('-P', '--parallel', default=4, help='Number of parallel flows per client')
 @click.option('--server', default='localhost', help='iPerf3 server IP address')
 @click.option('-p', '--initial-port', default=5101, help='Initial port number')
-def main(duration, clients_per_second, size, parallel, server, initial_port):
+@click.option('--experiment-id', help='Experiment ID for datastore')
+def main(duration, clients_per_second, size, parallel, server, initial_port, experiment_id):
     """
     Experiment client that spawns iperf3 clients at a controlled rate
     
@@ -236,7 +250,8 @@ def main(duration, clients_per_second, size, parallel, server, initial_port):
         transfer_size=size,
         parallel_flows=parallel,
         server_ip=server,
-        initial_port=initial_port
+        initial_port=initial_port,
+        experiment_id=experiment_id
     )
     
     client.run()
