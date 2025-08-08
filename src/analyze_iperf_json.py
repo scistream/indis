@@ -290,7 +290,8 @@ class IperfJsonAnalyzer:
                     transfer_avg = np.mean(self.data['transfer_times'])
                     transfer_max = max(self.data['transfer_times'])
                     datastore.save_experiment(self.experiment_id, **{
-                        'Total transfer time': transfer_avg})
+                        'transfer_avg': transfer_avg,
+                        'transfer_max': transfer_max})
                 except ImportError:
                     pass
             

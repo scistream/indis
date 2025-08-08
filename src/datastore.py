@@ -13,7 +13,7 @@ class ExperimentDatastore:
             'id', 'timestamp',
             'interface', 'speed', 'duration', 'Parallel.', 'Concur.', 'Freq', 'size',
             'offered load', 'Observed utilization', 'Total transfer time', 'tx', 'propagation',
-            'rx_avg', 'rx_median', 'rx_max'
+            'rx_avg', 'rx_median', 'rx_max', 'transfer_avg', 'transfer_max'
         ]
         self._ensure_file_exists()
     
