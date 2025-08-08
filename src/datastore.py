@@ -2,8 +2,8 @@
 """
 Simple CSV datastore for experiment results
 """
-import csv
 import os
+import pandas as pd
 from datetime import datetime
 
 class ExperimentDatastore:
@@ -20,21 +20,38 @@ class ExperimentDatastore:
     def _ensure_file_exists(self):
         """Create CSV file with headers if it doesn't exist"""
         if not os.path.exists(self.csv_file):
-            with open(self.csv_file, 'w', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(self.headers)
+            df = pd.DataFrame(columns=self.headers)
+            df.to_csv(self.csv_file, index=False)
     
     def save_experiment(self, experiment_id, timestamp=None, **kwargs):
-        """Save experiment results to CSV"""
-        row = {header: kwargs.get(header, '') for header in self.headers}
-        row['id'] = experiment_id
-        row['timestamp'] = timestamp or datetime.now().isoformat()
+        """Save experiment results to CSV, updating existing row if ID exists"""
+        # Load existing data
+        try:
+            df = pd.read_csv(self.csv_file)
+        except (FileNotFoundError, pd.errors.EmptyDataError):
+            df = pd.DataFrame(columns=self.headers)
         
-        with open(self.csv_file, 'a', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=self.headers)
-            writer.writerow(row)
+        # Prepare new row data
+        row_data = {header: kwargs.get(header, '') for header in self.headers}
+        row_data['id'] = experiment_id
+        row_data['timestamp'] = timestamp or datetime.now().isoformat()
         
-        print(f"Saved experiment {experiment_id} to {self.csv_file}")
+        # Check if experiment_id already exists
+        if experiment_id in df['id'].values:
+            # Update existing row
+            idx = df[df['id'] == experiment_id].index[0]
+            for key, value in row_data.items():
+                if value != '':  # Only update non-empty values
+                    df.at[idx, key] = value
+            print(f"Updated experiment {experiment_id} in {self.csv_file}")
+        else:
+            # Add new row
+            new_row = pd.DataFrame([row_data])
+            df = pd.concat([df, new_row], ignore_index=True)
+            print(f"Added experiment {experiment_id} to {self.csv_file}")
+        
+        # Save back to CSV
+        df.to_csv(self.csv_file, index=False)
 
 # Global datastore instance
 datastore = ExperimentDatastore()
