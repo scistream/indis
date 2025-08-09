@@ -66,8 +66,8 @@ class ExperimentClient:
         print(f"\n[Batch {batch_num}] Starting {self.clients_per_second} clients at {datetime.now().strftime('%H:%M:%S.%f')[:-3]}")
         
         batch_processes = []
+        stagger_delay = 1.0 / (self.clients_per_second + 1)  # Divide 1 second into c+1 parts
         
-        # Use ThreadPoolExecutor to start clients concurrently
         with ThreadPoolExecutor(max_workers=self.clients_per_second) as executor:
             futures = []
             
@@ -78,8 +78,8 @@ class ExperimentClient:
                 # Submit client start task
                 future = executor.submit(self.start_iperf_client, port, batch_num, client_num)
                 futures.append(future)
+                time.sleep(stagger_delay)
             
-            # Collect results
             for future in as_completed(futures):
                 process, port, log_file = future.result()
                 if process:
@@ -87,7 +87,7 @@ class ExperimentClient:
                     print(f"  Started client → {self.server_ip}:{port} (PID: {process.pid})")
         
         batch_spawn_duration = time.time() - batch_start_time
-        print(f"[Batch {batch_num}] Spawned {len(batch_processes)} clients in {batch_spawn_duration:.3f}s")
+        print(f"[Batch {batch_num}] Spawned {len(batch_processes)} clients in {batch_spawn_duration:.3f}s (stagger: {stagger_delay*1000:.0f}ms)")
         
         return batch_processes, batch_spawn_duration
         
