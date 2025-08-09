@@ -7,6 +7,7 @@ import time
 import csv
 import os
 import click
+import threading
 from datetime import datetime
 from datastore import datastore
 
@@ -45,10 +46,31 @@ class ExperimentAutomation:
             print(f"SSH command failed: {e}")
             return False
     
+    def run_ssh_command_async(self, host, command, log_file=None):
+        """Run SSH command asynchronously and return process"""
+        ssh_cmd = f"ssh {host} '{command}'"
+        print(f"Starting on {host}: {command}")
+        
+        try:
+            if log_file:
+                log_suffix = f"_{host}"
+                process = subprocess.Popen(ssh_cmd, shell=True, 
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                                         universal_newlines=True)
+                return process, host, log_file + log_suffix
+            else:
+                process = subprocess.Popen(ssh_cmd, shell=True, 
+                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                         universal_newlines=True)
+                return process, host, None
+        except Exception as e:
+            print(f"Failed to start SSH command on {host}: {e}")
+            return None, host, None
+
     def run_single_experiment(self, exp_id, duration=10, concurrency=4, interface="enp7s0np0", 
                             delay=10, port=5100, client_rate=1, transfer_size="2G", parallel=1, 
                             log_file=None):
-        """Run a single distributed experiment"""
+        """Run a single distributed experiment with parallel server/client execution"""
         print(f"\n=== Starting Experiment {exp_id} ===")
         if log_file:
             with open(log_file, 'a') as f:
@@ -56,34 +78,71 @@ class ExperimentAutomation:
                 f.write(f"Experiment {exp_id} - {datetime.now()}\n")
                 f.write(f"{'='*50}\n")
         
-        # Step 1: Start server side
+        # Prepare commands
         server_cmd = f"source ~/indis/.venv/bin/activate && cd ~/indis/src && python3 experiment_orchestrator.py -t {duration} -c {concurrency} -i {interface} -o network_data.csv -d {delay} -p {port} --experiment-id {exp_id}"
+        client_cmd = f"source ~/indis/.venv/bin/activate && cd ~/indis/src && python3 experiment_client.py -t {duration} -c {client_rate} -s {transfer_size} -P {parallel} --server {self.server_ip} -p {port} --experiment-id {exp_id}"
         
-        if not self.run_ssh_command(self.server_host, server_cmd, log_file):
+        # Step 1: Start server
+        server_process, _, server_log = self.run_ssh_command_async(self.server_host, server_cmd, log_file)
+        if not server_process:
             print(f"Failed to start server for experiment {exp_id}")
             return False
         
         # Step 2: Wait 2 seconds then start client
         time.sleep(2)
-        
-        client_cmd = f"source ~/indis/.venv/bin/activate && cd ~/indis/src && python3 experiment_client.py -t {duration} -c {client_rate} -s {transfer_size} -P {parallel} --server {self.server_ip} -p {port} --experiment-id {exp_id}"
-        
-        if not self.run_ssh_command(self.client_host, client_cmd, log_file):
+        client_process, _, client_log = self.run_ssh_command_async(self.client_host, client_cmd, log_file)
+        if not client_process:
             print(f"Failed to start client for experiment {exp_id}")
+            server_process.terminate()
             return False
         
-        # Step 3: Wait for experiment completion (2 * (duration + delay))
-        wait_time = 2 * (duration + delay)
-        print(f"Waiting {wait_time}s for experiment completion...")
-        time.sleep(wait_time)
+        print(f"Both server and client started for {exp_id}, waiting for completion...")
         
-        # Step 4: Check datastore for results
+        # Step 3: Monitor processes and log output
+        def log_output(process, host, log_path):
+            if log_path:
+                with open(log_path, 'a') as f:
+                    f.write(f"\n--- {host} output ---\n")
+                    for line in process.stdout:
+                        f.write(line)
+            else:
+                # Consume output silently if no log file
+                for line in process.stdout:
+                    pass
+        
+        # Start logging threads
+        server_thread = threading.Thread(target=log_output, args=(server_process, self.server_host, server_log))
+        client_thread = threading.Thread(target=log_output, args=(client_process, self.client_host, client_log))
+        
+        server_thread.start()
+        client_thread.start()
+        
+        # Wait for both processes to complete
+        server_result = server_process.wait()
+        client_result = client_process.wait()
+        
+        # Wait for logging threads to finish
+        server_thread.join()
+        client_thread.join()
+        
+        if server_result != 0:
+            print(f"Server process failed with exit code {server_result}")
+            return False
+        
+        if client_result != 0:
+            print(f"Client process failed with exit code {client_result}")
+            return False
+        
+        print(f"Both processes completed successfully for {exp_id}")
+        
+        # Step 4: Wait a bit then check datastore for results
+        time.sleep(5)
         return self.check_experiment_results(exp_id)
     
     def check_experiment_results(self, exp_id):
         """Check if experiment results were saved to datastore"""
         # Copy datastore from server
-        scp_cmd = f"scp {self.server_host}:~/indis/experiment_results.csv ./remote_results.csv"
+        scp_cmd = f"scp {self.server_host}:~/indis/src/experiment_results.csv ./remote_results.csv"
         
         try:
             result = subprocess.run(scp_cmd, shell=True, capture_output=True)
@@ -100,7 +159,8 @@ class ExperimentAutomation:
                             print(f"✅ Experiment {exp_id} results found:")
                             print(f"   ID: {row.get('id', 'N/A')}")
                             print(f"   Observed utilization: {row.get('Observed utilization', 'N/A')} Gbps")
-                            print(f"   Total transfer time: {row.get('Total transfer time', 'N/A')} s")
+                            print(f"   Transfer avg: {row.get('transfer_avg', 'N/A')} s")
+                            print(f"   Transfer max: {row.get('transfer_max', 'N/A')} s")
                             self.results.append(row)
                             return True
             
@@ -118,8 +178,8 @@ class ExperimentAutomation:
             return
         
         print(f"\n=== Experiment Results Summary ({len(self.results)} experiments) ===")
-        print(f"{'ID':<20} {'Interface':<12} {'Duration':<8} {'Concur.':<6} {'Utilization':<12} {'Transfer Time':<15}")
-        print("-" * 80)
+        print(f"{'ID':<20} {'Interface':<12} {'Duration':<8} {'Concur.':<6} {'Utilization':<12} {'Transfer Avg':<12} {'Transfer Max':<12}")
+        print("-" * 90)
         
         for result in self.results:
             print(f"{result.get('id', 'N/A'):<20} "
@@ -127,7 +187,8 @@ class ExperimentAutomation:
                   f"{result.get('duration', 'N/A'):<8} "
                   f"{result.get('Concur.', 'N/A'):<6} "
                   f"{result.get('Observed utilization', 'N/A'):<12} "
-                  f"{result.get('Total transfer time', 'N/A'):<15}")
+                  f"{result.get('transfer_avg', 'N/A'):<12} "
+                  f"{result.get('transfer_max', 'N/A'):<12}")
     
     def save_local_datastore(self, output_file="experiment_results_local.csv"):
         """Save collected results to local datastore"""

@@ -1,0 +1,13 @@
+exp_id,duration,concurrency,interface,delay,port,client_rate,transfer_size,parallel
+exp1200,10,16,enp7s0np0,10,5100,16,0.05G,1
+exp1201,10,16,enp7s0np0,10,5100,16,0.1G,1
+exp1202,10,16,enp7s0np0,10,5100,16,0.15G,1
+exp1203,10,16,enp7s0np0,10,5100,16,0.2G,1
+exp1204,10,16,enp7s0np0,10,5100,16,0.05G,1
+exp1205,10,16,enp7s0np0,10,5100,16,0.1G,1
+exp1206,10,16,enp7s0np0,10,5100,16,0.15G,1
+exp1207,10,16,enp7s0np0,10,5100,16,0.2G,1
+exp1208,10,16,enp7s0np0,10,5100,16,0.05G,1
+exp1209,10,16,enp7s0np0,10,5100,16,0.1G,1
+exp1210,10,16,enp7s0np0,10,5100,16,0.15G,1
+exp1211,10,16,enp7s0np0,10,5100,16,0.2G,1
