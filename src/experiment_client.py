@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class ExperimentClient:
     def __init__(self, duration, clients_per_second, transfer_size, parallel_flows, 
-                 server_ip, initial_port, experiment_id=None):
+                 server_ip, initial_port, experiment_id=None, stagger_delay=True):
         self.duration = duration
         self.clients_per_second = clients_per_second
         self.transfer_size = transfer_size
@@ -23,6 +23,7 @@ class ExperimentClient:
         self.server_ip = server_ip
         self.initial_port = initial_port
         self.experiment_id = experiment_id
+        self.stagger_delay = stagger_delay
         self.log_dir = f"client_experiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self.current_port = initial_port
         self.active_processes = []
@@ -66,7 +67,7 @@ class ExperimentClient:
         print(f"\n[Batch {batch_num}] Starting {self.clients_per_second} clients at {datetime.now().strftime('%H:%M:%S.%f')[:-3]}")
         
         batch_processes = []
-        stagger_delay = 1.0 / (self.clients_per_second + 1)  # Divide 1 second into c+1 parts
+        stagger_delay = 1.0 / (self.clients_per_second + 1) if self.stagger_delay else 0
         
         with ThreadPoolExecutor(max_workers=self.clients_per_second) as executor:
             futures = []
@@ -88,7 +89,7 @@ class ExperimentClient:
         
         batch_spawn_duration = time.time() - batch_start_time
         print(f"[Batch {batch_num}] Spawned {len(batch_processes)} clients in {batch_spawn_duration:.3f}s (stagger: {stagger_delay*1000:.0f}ms)")
-        
+
         return batch_processes, batch_spawn_duration
         
     def run_experiment(self):
@@ -226,7 +227,8 @@ class ExperimentClient:
 @click.option('--server', default='localhost', help='iPerf3 server IP address')
 @click.option('-p', '--initial-port', default=5101, help='Initial port number')
 @click.option('--experiment-id', help='Experiment ID for datastore')
-def main(duration, clients_per_second, size, parallel, server, initial_port, experiment_id):
+@click.option('--stagger', is_flag=True, help='Enable staggered client starts (instead of simultaneously)')
+def main(duration, clients_per_second, size, parallel, server, initial_port, experiment_id, stagger):
     """
     Experiment client that spawns iperf3 clients at a controlled rate
     
@@ -251,7 +253,8 @@ def main(duration, clients_per_second, size, parallel, server, initial_port, exp
         parallel_flows=parallel,
         server_ip=server,
         initial_port=initial_port,
-        experiment_id=experiment_id
+        experiment_id=experiment_id,
+        stagger_delay=stagger
     )
     
     client.run()
